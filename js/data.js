@@ -292,37 +292,6 @@ window.MD = (function () {
       ]
     },
     {
-      id: 'monitor', name: '外接螢幕', icon: 'bi-display', types: ['desktop', 'mini'], kind: 'option', role: 'wall',
-      qs: ['接了哪些外接螢幕？'],
-      help: '螢幕插在自己的插座上，會另外算，不算進主機電源。尺寸是螢幕對角線長度。',
-      options: [
-        o('mon-none', '', '不計算螢幕', '只算主機', 0, 0, 1, ['desktop', 'mini']),
-        o('mon-24', '', '24 吋 FHD × 1', '1920×1080', 12, 25, 2, ['desktop', 'mini']),
-        o('mon-27', '', '27 吋 2K × 1', '2560×1440', 15, 35, 3, ['desktop', 'mini']),
-        o('mon-27-4k', '', '27 吋 4K × 1', '3840×2160', 20, 45, 4, ['desktop', 'mini']),
-        o('mon-32-4k', '', '32 吋 4K × 1', '3840×2160', 25, 60, 4, ['desktop', 'mini']),
-        o('mon-34uw', '', '34 吋 帶魚螢幕 × 1', '3440×1440', 25, 55, 4, ['desktop', 'mini']),
-        o('mon-2x24', '', '24 吋 FHD × 2', '雙螢幕', 24, 50, 3, ['desktop', 'mini']),
-        o('mon-2x27', '', '27 吋 2K × 2', '雙螢幕', 30, 70, 4, ['desktop', 'mini']),
-        o('mon-3x27', '', '27 吋 × 3', '三螢幕', 45, 105, 5, ['desktop', 'mini'])
-      ]
-    },
-    {
-      id: 'panel', name: '內建螢幕', icon: 'bi-aspect-ratio', types: ['laptop', 'mobile'], kind: 'option',
-      qs: ['螢幕多大？'],
-      help: '螢幕尺寸是對角線長度，產品規格表上會寫，例如 14 吋、15.6 吋、6.1 吋。',
-      options: [
-        o('pnl-13', '', '13～14 吋', '輕薄筆電', 1.2, 5, 2, ['laptop']),
-        o('pnl-15', '', '15～16 吋', '一般筆電', 1.8, 7, 3, ['laptop']),
-        o('pnl-16g', '', '16 吋 高更新率／OLED', '120Hz 以上或 OLED', 2.5, 10, 4, ['laptop']),
-        o('pnl-18', '', '17～18 吋 電競螢幕', '大尺寸高更新率', 3.5, 13, 5, ['laptop']),
-        o('pnl-phone', '', '手機 6 吋級', '一般尺寸手機', 0.3, 1.8, 2, MOB),
-        o('pnl-phone-l', '', '大螢幕手機 6.7 吋級', 'Plus、Pro Max、Ultra', 0.4, 2.5, 3, MOB),
-        o('pnl-tab', '', '平板 11 吋級', '一般平板', 0.8, 4, 3, MOB),
-        o('pnl-tab-l', '', '平板 13 吋級', '大尺寸平板', 1.2, 6, 4, MOB)
-      ]
-    },
-    {
       id: 'peripheral', name: '周邊裝置', icon: 'bi-keyboard', types: PC, kind: 'option',
       qs: ['接了哪些周邊裝置？'],
       help: '透過 USB 接在電腦上、由電腦供電的裝置，例如鍵盤、滑鼠、耳機、外接硬碟。',

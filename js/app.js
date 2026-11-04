@@ -589,8 +589,6 @@
     const base = D.base[t];
     let dcI = base.idle;
     let dcM = base.max;
-    let wI = 0;
-    let wM = 0;
     let effL = D.adapter[t].load;
     let effI = D.adapter[t].idle;
     let effGuess = t === 'desktop';
@@ -609,8 +607,9 @@
         effGuess = false;
         return;
       }
-      rows.push({ id: slot.id, name: slotName(slot, t), sub: describe(slot, a.v), icon: slot.icon, idle: val.idle, max: val.max, wall: slot.role === 'wall' });
-      if (slot.role === 'wall') { wI += val.idle; wM += val.max; } else { dcI += val.idle; dcM += val.max; }
+      rows.push({ id: slot.id, name: slotName(slot, t), sub: describe(slot, a.v), icon: slot.icon, idle: val.idle, max: val.max });
+      dcI += val.idle;
+      dcM += val.max;
     });
     const hostI = dcI / effI;
     const hostM = dcM / effL;
@@ -623,7 +622,7 @@
     } else {
       rec = { label: '建議變壓器', value: snap([45, 65, 90, 100, 120, 140, 180, 200, 230, 240, 280, 330], dcM * 1.1), note: '機身滿載含充電約 ' + num(dcM) + ' W' };
     }
-    return { min: hostI + wI, max: hostM + wM, rows: rows, skipped: skipped, filled: filled, rec: rec };
+    return { min: hostI, max: hostM, rows: rows, skipped: skipped, filled: filled, rec: rec };
   }
 
   function rating(max) {
@@ -650,7 +649,7 @@
     const top = rows.length ? rows[0].max : 1;
     let html = rows.map(function (x) {
       return '<li class="break-item"' + (x.id ? ' data-jump="' + x.id + '" title="修改這一題"' : '') + '><i class="bi ' + x.icon + '"></i>' +
-        '<p class="bi-name">' + esc(x.name) + (x.sub ? '<em>' + esc(x.sub) + '</em>' : '') + (x.wall ? '<em>另接插座</em>' : '') + '</p>' +
+        '<p class="bi-name">' + esc(x.name) + (x.sub ? '<em>' + esc(x.sub) + '</em>' : '') + '</p>' +
         '<p class="bi-w">' + wattText(x.idle, x.max) + '</p>' +
         '<div class="bi-bar"><span class="bm" data-w="' + (x.max / top * 100).toFixed(2) + '"></span><span class="bn" data-w="' + (x.idle / top * 100).toFixed(2) + '"></span></div>' +
         '</li>';
