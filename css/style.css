@@ -655,6 +655,8 @@ html[data-layout="portrait"] .res-wrap {
   align-self: start;
 }
 
+.res-cards.is-two { grid-template-columns: repeat(2, 1fr); }
+
 .card {
   position: relative;
   display: flex;

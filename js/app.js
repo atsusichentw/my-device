@@ -614,14 +614,9 @@
     const hostI = dcI / effI;
     const hostM = dcM / effL;
     rows.push({ name: '電源轉換損耗', sub: '效率約 ' + Math.round(effL * 100) + '%' + (effGuess && t === 'desktop' ? '（未填，以銅牌估算）' : ''), icon: 'bi-fire', idle: hostI - dcI, max: hostM - dcM });
-    let rec;
-    if (t === 'desktop') {
-      rec = { label: '建議電源供應器', value: snap([350, 450, 550, 650, 750, 850, 1000, 1200, 1300, 1600, 2000], dcM * 1.3), note: '主機滿載約 ' + num(dcM) + ' W，再預留 30% 餘裕' };
-    } else if (t === 'mobile') {
-      rec = { label: '建議充電器', value: snap([5, 10, 18, 20, 25, 30, 45, 65, 100], dcM), note: '機身滿載含充電約 ' + num(dcM) + ' W' };
-    } else {
-      rec = { label: '建議變壓器', value: snap([45, 65, 90, 100, 120, 140, 180, 200, 230, 240, 280, 330], dcM * 1.1), note: '機身滿載含充電約 ' + num(dcM) + ' W' };
-    }
+    const rec = t === 'desktop'
+      ? { value: snap([350, 450, 550, 650, 750, 850, 1000, 1200, 1300, 1600, 2000], dcM * 1.3), note: '主機滿載約 ' + num(dcM) + ' W，再預留 30% 餘裕' }
+      : null;
     return { min: hostI, max: hostM, rows: rows, skipped: skipped, filled: filled, rec: rec };
   }
 
@@ -638,9 +633,12 @@
     const rt = rating(r.max);
     $('#rStars').textContent = '★'.repeat(rt.stars) + '☆'.repeat(5 - rt.stars);
     $('#rTitle').textContent = rt.title;
-    $('#recLabel').textContent = r.rec.label;
-    $('#recValue').textContent = r.rec.value;
-    $('#recNote').textContent = r.rec.note;
+    $('.card-rec').hidden = !r.rec;
+    $('.res-cards').classList.toggle('is-two', !r.rec);
+    if (r.rec) {
+      $('#recValue').textContent = r.rec.value;
+      $('#recNote').textContent = r.rec.note;
+    }
     $('#vMin').textContent = '0';
     $('#vMax').textContent = '0';
     $('#gMin').style.strokeDashoffset = GAUGE_LEN;
