@@ -3,22 +3,24 @@
 
   const D = window.MD;
   const root = document.documentElement;
-  const STORE = 'mydevice.v1';
+  const STORE = 'mydevice.v2';
   const HOURS = 'mydevice.hours';
   const DESIGN = { landscape: [1920, 1080], portrait: [1080, 1920] };
-  const STATUS = { detected: '已偵測', guess: '推測', manual: '已選擇', preset: '常見值', empty: '待選擇' };
   const GAUGE_LEN = 804.25;
 
   const $ = function (s, el) { return (el || document).querySelector(s); };
   const $$ = function (s, el) { return Array.prototype.slice.call((el || document).querySelectorAll(s)); };
   const wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
 
-  let det = null;
-  let detPromise = null;
-  let state = null;
-  let dlg = null;
-  let scanRun = 0;
+  let S = { type: null, ans: {} };
+  let step = 0;
+  let path = [];
+  let query = '';
+  let custom = false;
+  let counts = null;
+  let advanceTimer = null;
   let toastTimer = null;
+  let lastResult = null;
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -28,25 +30,19 @@
 
   function num(n) {
     if (n >= 100) return String(Math.round(n));
-    if (n >= 10) return String(Math.round(n * 10) / 10).replace(/\.0$/, '');
     return String(Math.round(n * 10) / 10).replace(/\.0$/, '');
   }
 
   function wattText(a, b) {
-    if (a === b) return num(a) + ' W';
-    return num(a) + '–' + num(b) + ' W';
+    return a === b ? num(a) + ' W' : num(a) + '–' + num(b) + ' W';
   }
 
   function stars(n) {
     return '★'.repeat(Math.max(1, Math.min(5, n)));
   }
 
-  function bytes(n) {
-    if (!n) return '0';
-    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let i = 0;
-    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-    return (n >= 100 ? Math.round(n) : Math.round(n * 10) / 10) + ' ' + u[i];
+  function pad(n) {
+    return (n < 10 ? '0' : '') + n;
   }
 
   function toast(msg) {
@@ -71,14 +67,13 @@
   }
 
   function makeStars() {
-    const box = $('#stars');
     let html = '';
     for (let i = 0; i < 90; i++) {
       html += '<span style="left:' + (Math.random() * 100).toFixed(2) + '%;top:' + (Math.random() * 100).toFixed(2) +
         '%;--s:' + (Math.random() * 2.2 + 0.8).toFixed(1) + 'px;--t:' + (Math.random() * 4 + 3).toFixed(1) +
         's;--d:-' + (Math.random() * 6).toFixed(1) + 's"></span>';
     }
-    box.innerHTML = html;
+    $('#stars').innerHTML = html;
   }
 
   function inlineEmblem() {
@@ -101,7 +96,6 @@
       new Promise(function (r) { window.addEventListener('load', r, { once: true }); }),
       wait(4000)
     ]);
-    detPromise = window.MDDetect.run();
     Promise.all([fonts, loaded, wait(900)]).then(function () {
       clearInterval(tick);
       bar.style.width = '100%';
@@ -120,12 +114,39 @@
     setTimeout(function () { f.remove(); }, 650);
   }
 
+  function load() {
+    try {
+      const v = JSON.parse(localStorage.getItem(STORE) || 'null');
+      if (v && typeof v === 'object' && v.ans && typeof v.ans === 'object') {
+        S = { type: D.typeById[v.type] ? v.type : null, ans: v.ans };
+      }
+    } catch (e) {
+      S = { type: null, ans: {} };
+    }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(STORE, JSON.stringify(S));
+    } catch (e) {
+      return;
+    }
+    updateClear();
+  }
+
+  function hasSaved() {
+    return !!S.type;
+  }
+
+  function updateClear() {
+    $('#btnClear').hidden = !hasSaved();
+  }
+
   function go(name) {
     const cur = $('.scene.is-active');
     const next = $('.scene[data-scene="' + name + '"]');
     if (!next) return;
-    closeModal();
-    if (name === 'parts') renderParts(true);
+    clearTimeout(advanceTimer);
     if (name === 'result') renderResult();
     if (cur !== next) {
       if (cur) cur.classList.remove('is-active');
@@ -134,7 +155,7 @@
     }
     root.setAttribute('data-scene', name);
     if (name === 'result') animateResult();
-    if (name === 'scan') runScan();
+    if (name === 'cover') updateClear();
   }
 
   function slotsFor(t) {
@@ -153,223 +174,376 @@
     return (slot.names && slot.names[t]) || slot.name;
   }
 
-  function cleanGpu() {
-    return det && det.gl && !det.gl.software && !det.gl.masked ? det.gl.clean : '';
+  function answers() {
+    if (!S.type) return {};
+    if (!S.ans[S.type]) S.ans[S.type] = {};
+    return S.ans[S.type];
   }
 
-  function guessType() {
-    const d = det;
-    if (d.isIPhone || d.isAndroidMobile || (d.ud && d.ud.mobile)) return { id: 'mobile', status: 'detected' };
-    if (d.isIPad || d.isAndroid) return { id: 'mobile', status: 'detected' };
-    if (/laptop|max-q/i.test(cleanGpu())) return { id: 'laptop', status: 'detected' };
-    if (d.battery && !d.battery.desktopLike) return { id: 'laptop', status: 'detected' };
-    if (d.screen.touch > 1 && !d.isMac) return { id: 'laptop', status: 'guess' };
-    return { id: 'desktop', status: 'guess' };
+  function getAns(id) {
+    return answers()[id] || null;
   }
 
-  function appleChip() {
-    const m = cleanGpu().toLowerCase().match(/apple m(\d+)\s*(pro|max|ultra)?/);
-    return m ? (m[2] ? 'apple-' + m[2] : 'apple-m') : null;
+  function setAns(id, a) {
+    answers()[id] = a;
+    save();
   }
 
-  function guessCpu(t) {
-    const d = det;
-    const s = cleanGpu().toLowerCase();
-    if (t === 'mobile') {
-      if (d.isIPhone) return { v: { id: 'soc-apple-a' }, status: 'detected' };
-      if (d.isIPad) return { v: { id: appleChip() ? 'soc-apple-m' : 'soc-apple-a' }, status: 'guess' };
-      const m = d.memory || 0;
-      if (!m) return null;
-      return { v: { id: m >= 8 ? 'soc-flag' : m >= 4 ? 'soc-mid' : 'soc-entry' }, status: 'guess' };
-    }
-    const chip = appleChip();
-    if (chip) {
-      if (chip === 'apple-ultra' && t === 'laptop') return { v: { id: 'apple-max' }, status: 'guess' };
-      return { v: { id: chip }, status: 'detected' };
-    }
-    if (d.isMac && /apple/.test(s)) return { v: { id: 'apple-m' }, status: 'guess' };
-    if (/adreno|snapdragon|qualcomm/.test(s) && t !== 'desktop') return { v: { id: 'lcpu-snap' }, status: 'detected' };
-    const n = d.threads;
-    if (!n) return null;
-    let id;
-    if (t === 'desktop') {
-      id = n <= 8 ? 'dcpu-entry' : n <= 12 ? 'dcpu-main' : n <= 16 ? 'dcpu-r7' : n <= 20 ? 'dcpu-main-k' : n <= 28 ? 'dcpu-i7' : n <= 32 ? 'dcpu-r9' : 'dcpu-ws';
-    } else {
-      id = n <= 4 ? 'lcpu-n' : n <= 12 ? 'lcpu-u' : n <= 20 ? 'lcpu-h' : 'lcpu-hx';
-    }
-    return { v: { id: id }, status: 'guess' };
+  function steps() {
+    if (!S.type) return ['type'];
+    return ['type'].concat(slotsFor(S.type).map(function (s) { return s.id; }));
   }
 
-  function guessGpu(t) {
-    const d = det;
-    const raw = cleanGpu();
-    const s = raw.toLowerCase();
-    const wg = d.gpu;
-    if (!s) {
-      if (wg && wg.vendor === 'apple') return { v: { id: 'igpu-apple' }, status: 'guess' };
-      return null;
-    }
-    if (/apple/.test(s)) return { v: { id: 'igpu-apple' }, status: 'detected' };
-    if (/adreno|mali|powervr|xclipse|immortalis/.test(s)) return { v: { id: 'igpu-soc' }, status: 'detected' };
-    const laptopName = /laptop|mobile|max-q/.test(s);
-    if (laptopName || (t === 'laptop' && /rtx|gtx|radeon rx|mx\s*\d/.test(s))) {
-      let id = null;
-      if (/rtx\s*\d0[89]0|rtx\s*[23]0[89]0/.test(s)) id = 'lgpu-high';
-      else if (/rtx\s*\d0[67]0/.test(s)) id = 'lgpu-mid';
-      else if (/rtx\s*\d050|gtx|mx\s*\d/.test(s)) id = 'lgpu-low';
-      else if (/radeon/.test(s)) id = 'lgpu-amd';
-      if (id && t !== 'desktop') return { v: { id: id }, status: 'detected' };
-    }
-    if (t !== 'laptop') {
-      for (let i = 0; i < D.gpuMatchers.length; i++) {
-        if (D.gpuMatchers[i].re.test(s)) return { v: { id: D.gpuMatchers[i].id }, status: 'detected' };
+  function unique(list) {
+    const out = [];
+    list.forEach(function (x) { if (x && out.indexOf(x) < 0) out.push(x); });
+    return out;
+  }
+
+  function tree(slot) {
+    const opts = optionsFor(slot, S.type);
+    const brands = unique(opts.map(function (o) { return o.brand; }));
+    const useBrand = brands.length > 1;
+    return { opts: opts, brands: brands, useBrand: useBrand };
+  }
+
+  function levelInfo(slot) {
+    const tr = tree(slot);
+    const sub = tr.useBrand && path[0] ? tr.opts.filter(function (o) { return o.brand === path[0]; }) : tr.opts;
+    const groups = unique(sub.map(function (o) { return o.group; }));
+    const useGroup = groups.length > 1;
+    const gi = tr.useBrand ? 1 : 0;
+    if (tr.useBrand && path.length === 0) return { kind: 'brand', tr: tr, depth: 0 };
+    if (useGroup && path.length === gi) return { kind: 'group', tr: tr, groups: groups, sub: sub, depth: gi };
+    const leaves = useGroup ? sub.filter(function (o) { return o.group === path[gi]; }) : sub;
+    return { kind: 'leaf', tr: tr, leaves: leaves };
+  }
+
+  function pathFor(slot, a) {
+    if (!a || a.s !== 'answered' || !a.v || !a.v.id) return [];
+    const o = optById(slot, a.v.id);
+    if (!o) return [];
+    const tr = tree(slot);
+    const p = [];
+    if (tr.useBrand) p.push(o.brand);
+    const sub = tr.useBrand ? tr.opts.filter(function (x) { return x.brand === o.brand; }) : tr.opts;
+    if (unique(sub.map(function (x) { return x.group; })).length > 1) p.push(o.group);
+    return p;
+  }
+
+  function enterStep(i) {
+    const ids = steps();
+    clearTimeout(advanceTimer);
+    step = Math.max(0, Math.min(ids.length - 1, i));
+    query = '';
+    $('#wzSearch').value = '';
+    custom = false;
+    path = [];
+    counts = null;
+    const id = ids[step];
+    if (id !== 'type') {
+      const slot = D.slotById[id];
+      const a = getAns(id);
+      custom = !!(a && a.s === 'answered' && a.v && a.v.custom);
+      if (slot.kind === 'counter') {
+        counts = a && a.s === 'answered' && a.v && a.v.counts ? Object.assign({}, a.v.counts) : {};
+      } else {
+        path = pathFor(slot, a);
       }
     }
-    const integrated = /intel/.test(s) ? 'igpu-intel' : /radeon|amd/.test(s) && !/\brx\b/.test(s) ? 'igpu-amd' : null;
-    if (integrated) {
-      if (wg && wg.vendor === 'nvidia' && t === 'laptop') return { v: { id: 'lgpu-mid' }, status: 'guess' };
-      if (wg && wg.vendor === 'nvidia' && t !== 'laptop') return null;
-      return { v: { id: integrated }, status: 'detected' };
-    }
-    return null;
+    renderStep(true);
   }
 
-  function guessRam(t) {
-    const m = det.memory;
-    if (!m) return null;
-    if (t === 'laptop' || appleChip() || det.isMac) {
-      return { v: { counts: { onboard: m >= 8 ? 2 : Math.max(1, Math.round(m / 8)) } }, status: 'guess' };
-    }
-    return { v: { counts: { ddr4: m >= 8 ? 2 : 1 } }, status: 'guess' };
+  function nodeState(id) {
+    if (id === 'type') return S.type ? 'is-done' : '';
+    const a = getAns(id);
+    if (!a) return '';
+    return a.s === 'answered' ? 'is-done' : 'is-skip';
   }
 
-  function guessMonitor() {
-    const sc = det.screen;
-    const pw = Math.max(sc.pw, sc.ph);
-    const ph = Math.min(sc.pw, sc.ph);
-    const ratio = pw / ph;
-    let id;
-    if (ratio >= 2.2) id = 'mon-34uw';
-    else if (pw >= 3800) id = 'mon-27-4k';
-    else if (pw >= 2500) id = 'mon-27';
-    else id = 'mon-24';
-    if (sc.extended) id = id === 'mon-27' || id === 'mon-27-4k' ? 'mon-2x27' : 'mon-2x24';
-    return { v: { id: id }, status: 'guess' };
+  function renderNodes() {
+    const ids = steps();
+    $('#wzStep').textContent = 'STEP ' + pad(step + 1) + (S.type ? ' / ' + pad(ids.length) : '');
+    $('#wzNodes').innerHTML = ids.map(function (id, i) {
+      const icon = id === 'type' ? (S.type ? D.typeById[S.type].icon : 'bi-question-lg') : D.slotById[id].icon;
+      const name = id === 'type' ? '裝置類型' : slotName(D.slotById[id], S.type);
+      return '<li><button type="button" class="wz-node ' + nodeState(id) + (i === step ? ' is-cur' : '') + '" data-node="' + i + '" title="' + esc(name) + '" aria-label="' + esc(name) + '"><i class="bi ' + icon + '"></i></button></li>';
+    }).join('');
   }
 
-  function guessPanel(t) {
-    const sc = det.screen;
-    if (t === 'laptop') {
-      const id = det.refresh && det.refresh >= 120 ? 'pnl-16g' : sc.w <= 1536 ? 'pnl-13' : 'pnl-15';
-      return { v: { id: id }, status: 'guess' };
-    }
-    const short = Math.min(sc.w, sc.h);
-    const long = Math.max(sc.w, sc.h);
-    let id;
-    if (short < 600) id = long >= 900 ? 'pnl-phone-l' : 'pnl-phone';
-    else id = short >= 1000 ? 'pnl-tab-l' : 'pnl-tab';
-    return { v: { id: id }, status: 'guess' };
+  function chCard(attr, o, opts) {
+    opts = opts || {};
+    const rank = o.rank || 3;
+    const side = opts.more
+      ? '<span class="ch-side"><i class="bi bi-chevron-right ch-arrow"></i></span>'
+      : opts.side != null
+        ? '<span class="ch-side"><span class="ch-w">' + opts.side + '</span>' + (opts.noStars ? '' : '<span class="stars">' + stars(rank) + '</span>') + '</span>'
+        : '';
+    return '<button type="button" class="ch r' + rank + (opts.sel ? ' is-sel' : '') + (opts.cls ? ' ' + opts.cls : '') + '" ' + attr + '>' +
+      (opts.icon ? '<span class="ch-ico"><i class="bi ' + opts.icon + '"></i></span>' : '') +
+      '<span class="ch-text"><span class="ch-name">' + esc(o.name) + '</span>' +
+      (o.desc ? '<span class="ch-desc">' + esc(o.desc) + '</span>' : '') + '</span>' +
+      side + '</button>';
   }
 
-  function guessCharge(t) {
-    const b = det.battery;
-    if (!b || b.desktopLike) return null;
-    if (t === 'laptop') return { v: { id: b.charging ? 'chg-normal' : 'chg-none' }, status: 'guess' };
-    if (t === 'mobile') return { v: { id: b.charging ? 'mchg-fast' : 'mchg-none' }, status: 'guess' };
-    return null;
+  function grid(cards, n, big) {
+    return '<div class="ch-grid' + (big ? ' is-big' : '') + '" style="--n:' + n + '">' + cards.join('') + '</div>';
   }
 
-  function guessSlot(slot, t) {
-    if (!det) return null;
-    switch (slot.id) {
-      case 'cpu': return guessCpu(t);
-      case 'gpu': return guessGpu(t);
-      case 'ram': return guessRam(t);
-      case 'monitor': return guessMonitor();
-      case 'panel': return guessPanel(t);
-      case 'charge': return guessCharge(t);
-      default: return null;
-    }
-  }
-
-  function validValue(slot, v, t) {
-    if (!v || typeof v !== 'object') return false;
-    if (v.custom) return isFinite(v.idle) && isFinite(v.max) && v.idle >= 0 && v.max >= v.idle;
-    if (slot.kind === 'counter') return !!v.counts && typeof v.counts === 'object';
-    const o = optById(slot, v.id);
-    return !!o && o.types.indexOf(t) >= 0;
-  }
-
-  function loadSaved() {
-    try {
-      return JSON.parse(localStorage.getItem(STORE) || 'null');
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function save() {
-    if (!state) return;
-    const out = { type: state.type, typeManual: state.typeStatus === 'manual', byType: {} };
-    Object.keys(state.byType).forEach(function (t) {
-      const b = state.byType[t];
-      const vals = {};
-      Object.keys(b.values).forEach(function (k) {
-        if (b.status[k] === 'manual' || b.status[k] === 'preset') vals[k] = { v: b.values[k], s: b.status[k] };
-      });
-      out.byType[t] = vals;
+  function leafCards(slot, leaves) {
+    const a = getAns(slot.id);
+    const sel = a && a.s === 'answered' && a.v && a.v.id;
+    const big = leaves.length <= 4;
+    const cards = leaves.map(function (o) {
+      const side = slot.role === 'eff' ? '效率 ' + Math.round(o.eff * 100) + '%' : wattText(o.idle, o.max);
+      return chCard('data-opt="' + o.id + '"', o, { sel: o.id === sel, side: side, icon: big ? slot.icon : null });
     });
-    if (state.saved && state.saved.byType) {
-      Object.keys(state.saved.byType).forEach(function (t) {
-        if (!out.byType[t]) out.byType[t] = state.saved.byType[t];
-      });
+    if (slot.role !== 'eff') cards.push(customCard(big));
+    return grid(cards, cards.length, big && cards.length <= 5);
+  }
+
+  function customCard(big) {
+    return chCard('data-custom="1"', { name: '自己輸入瓦數', desc: '知道確切耗電時使用', rank: 1 }, { cls: 'ch-custom', icon: big ? 'bi-pencil-square' : 'bi-pencil-square', more: true });
+  }
+
+  function hit(o, q) {
+    const hay = (o.name + ' ' + (o.desc || '') + ' ' + (o.key || '') + ' ' + (o.brand || '') + ' ' + (o.group || '')).toLowerCase();
+    const flat = hay.replace(/[\s\-／・、（）()]/g, '');
+    return q.split(' ').every(function (w) {
+      return hay.indexOf(w) >= 0 || flat.indexOf(w.replace(/[\-／・、（）()]/g, '')) >= 0;
+    });
+  }
+
+  function renderSearch(slot) {
+    const q = query.toLowerCase().replace(/\s+/g, ' ').trim();
+    const list = optionsFor(slot, S.type).filter(function (o) { return hit(o, q); });
+    if (list.length) {
+      const a = getAns(slot.id);
+      const sel = a && a.s === 'answered' && a.v && a.v.id;
+      return grid(list.map(function (o) {
+        return chCard('data-opt="' + o.id + '"', { name: o.name, desc: (o.brand ? o.brand + (o.group ? '・' + o.group : '') + '｜' : '') + o.desc, rank: o.rank }, { sel: o.id === sel, side: wattText(o.idle, o.max) });
+      }), 3, false);
     }
-    try {
-      localStorage.setItem(STORE, JSON.stringify(out));
-    } catch (e) {
+    const others = [];
+    (slot.options || []).filter(function (o) { return hit(o, q); }).forEach(function (o) {
+      o.types.forEach(function (x) {
+        if (x !== S.type && slot.types.indexOf(x) >= 0 && others.indexOf(x) < 0) others.push(x);
+      });
+    });
+    if (others.length) {
+      return '<p class="wz-empty">目前裝置類型是「' + esc(D.typeById[S.type].name) + '」，符合的項目在 ' +
+        others.map(function (x) { return '「' + D.typeById[x].name + '」'; }).join('、') + ' 裡。<br>可以回到第一步換裝置類型，或改用「自己輸入瓦數」。</p>' + grid([customCard(false)], 1, false);
+    }
+    return '<p class="wz-empty">找不到符合的項目，可以換個關鍵字，或改用「自己輸入瓦數」。</p>' + grid([customCard(false)], 1, false);
+  }
+
+  function renderCustom(slot) {
+    const a = getAns(slot.id);
+    let idle = '';
+    let max = '';
+    if (a && a.s === 'answered' && a.v) {
+      if (a.v.custom) { idle = num(a.v.idle); max = num(a.v.max); }
+      else {
+        const val = valueOf(slot, a.v);
+        if (val) { idle = num(val.idle); max = num(val.max); }
+      }
+    }
+    return '<div class="custom-box">' +
+      '<p class="custom-tip">輸入這個零件待機（最小）與滿載（最大）時的耗電</p>' +
+      '<div class="custom-row">' +
+      '<label class="custom-field">最小<input type="number" id="cIdle" min="0" max="5000" step="0.1" inputmode="decimal" value="' + idle + '">W</label>' +
+      '<label class="custom-field">最大<input type="number" id="cMax" min="0" max="5000" step="0.1" inputmode="decimal" value="' + max + '">W</label>' +
+      '</div></div>';
+  }
+
+  function renderCounter(slot) {
+    return '<div class="ctr-list">' + slot.items.map(function (it) {
+      const c = counts[it.id] || 0;
+      return '<div class="ctr" data-item="' + it.id + '">' +
+        '<p class="ctr-name">' + esc(it.name) + '<span class="ctr-w">每個 ' + wattText(it.idle, it.max) + '</span></p>' +
+        '<div class="ctr-pad"><button type="button" data-step="-1" aria-label="減少"' + (c <= 0 ? ' disabled' : '') + '><i class="bi bi-dash-lg"></i></button>' +
+        '<span class="ctr-num">' + c + '</span>' +
+        '<button type="button" data-step="1" aria-label="增加"' + (c >= it.limit ? ' disabled' : '') + '><i class="bi bi-plus-lg"></i></button></div>' +
+        '</div>';
+    }).join('') + '</div>' + '<div class="ctr-more">' + grid([customCard(false)], 1, false) + '</div>';
+  }
+
+  function renderStep(animate) {
+    const ids = steps();
+    const id = ids[step];
+    renderNodes();
+    const main = $('#wzMain');
+    if (animate) {
+      main.classList.remove('is-in');
+      void main.offsetWidth;
+      main.classList.add('is-in');
+    }
+    const last = step === ids.length - 1 && S.type;
+    $('#wzNextLabel').textContent = last ? '查看結果' : '下一步';
+    $('#wzBack').disabled = step === 0 && !path.length && !custom && !query;
+    let q = '';
+    let crumb = '';
+    let help = '';
+    let body = '';
+    let search = false;
+    let ph = '';
+    if (id === 'type') {
+      q = '你要計算哪一種裝置？';
+      help = '選好之後，會依裝置類型一題一題問你；每一題都可以略過。';
+      body = grid(D.types.map(function (t) {
+        return chCard('data-type="' + t.id + '"', { name: t.name, desc: t.desc, rank: S.type === t.id ? 5 : 3 }, { sel: S.type === t.id, icon: t.icon });
+      }), 4, true);
+      $('#wzSkip').hidden = true;
+    } else {
+      const slot = D.slotById[id];
+      $('#wzSkip').hidden = false;
+      help = typeof slot.help === 'string' ? slot.help : (slot.help[S.type] || '');
+      if (custom) {
+        q = slotName(slot, S.type) + '耗電多少？';
+        crumb = '自己輸入瓦數';
+        body = renderCustom(slot);
+      } else if (slot.kind === 'counter') {
+        q = slot.qs[0];
+        body = renderCounter(slot);
+      } else {
+        search = !!slot.search;
+        ph = slot.ph || '';
+        if (search && query.trim()) {
+          q = slot.qs[slot.qs.length - 1];
+          crumb = '搜尋「' + query.trim() + '」';
+          body = renderSearch(slot);
+        } else {
+          const lv = levelInfo(slot);
+          crumb = path.join(' › ');
+          if (lv.kind === 'brand') {
+            q = slot.qs[0];
+            const big = lv.tr.brands.length <= 4;
+            body = grid(lv.tr.brands.map(function (b) {
+              const meta = D.brands[b] || { icon: slot.icon, desc: '' };
+              return chCard('data-brand="' + esc(b) + '"', { name: b, desc: meta.desc, rank: 3 }, { icon: meta.icon, more: !big });
+            }).concat(big ? [] : [customCard(false)]), lv.tr.brands.length, big);
+          } else if (lv.kind === 'group') {
+            q = slot.qs[Math.min(lv.depth, slot.qs.length - 1)];
+            body = grid(lv.groups.map(function (g) {
+              const n = lv.sub.filter(function (o) { return o.group === g; });
+              const top = n.reduce(function (m, o) { return Math.max(m, o.rank); }, 1);
+              return chCard('data-group="' + esc(g) + '"', { name: g, desc: n.slice(0, 3).map(function (o) { return o.name.replace(/^(GeForce|Radeon)\s/, ''); }).join('、') + (n.length > 3 ? ' 等 ' + n.length + ' 款' : ''), rank: top }, { more: true, icon: slot.icon });
+            }), 3, false);
+          } else {
+            q = slot.qs[slot.qs.length - 1];
+            body = leafCards(slot, lv.leaves);
+          }
+        }
+      }
+    }
+    $('#wzQ').textContent = q;
+    $('#wzCrumb').textContent = crumb;
+    $('#wzHelp').textContent = help;
+    $('#wzSearchWrap').hidden = !search;
+    $('#wzSearch').placeholder = ph;
+    $('#wzBody').innerHTML = body;
+    $('#wzBody').scrollTop = 0;
+    const sel = $('#wzBody .ch.is-sel');
+    if (sel) {
+      const b = $('#wzBody');
+      b.scrollTop = Math.max(0, sel.offsetTop - b.clientHeight / 2 + sel.offsetHeight / 2);
+    }
+  }
+
+  function advance() {
+    const ids = steps();
+    if (step >= ids.length - 1) {
+      if (!S.type) { toast('請先選擇裝置類型'); return; }
+      go('result');
       return;
     }
+    enterStep(step + 1);
   }
 
-  function initState() {
-    const g = guessType();
-    const saved = loadSaved();
-    state = { type: g.id, typeStatus: g.status, guessType: g, byType: {}, saved: saved };
-    if (saved && saved.typeManual && D.typeById[saved.type]) {
-      state.type = saved.type;
-      state.typeStatus = 'manual';
+  function commitCustom(slot) {
+    const idle = parseFloat(($('#cIdle') || {}).value);
+    const max = parseFloat(($('#cMax') || {}).value);
+    if (!isFinite(idle) || !isFinite(max) || idle < 0 || max < 0) { toast('請輸入最小與最大瓦數'); return false; }
+    if (max < idle) { toast('最大瓦數不能小於最小瓦數'); return false; }
+    if (max > 5000) { toast('瓦數太大了，請確認數值'); return false; }
+    setAns(slot.id, { s: 'answered', v: { custom: true, idle: idle, max: max } });
+    return true;
+  }
+
+  function onNext() {
+    const id = steps()[step];
+    if (id === 'type') {
+      if (!S.type) { toast('請先選擇裝置類型'); return; }
+      advance();
+      return;
     }
-    ensureType(state.type);
-  }
-
-  function ensureType(t) {
-    if (state.byType[t]) return state.byType[t];
-    const b = { values: {}, status: {} };
-    slotsFor(t).forEach(function (slot) {
-      const g = guessSlot(slot, t);
-      if (g && validValue(slot, g.v, t)) {
-        b.values[slot.id] = g.v;
-        b.status[slot.id] = g.status;
-      } else {
-        b.status[slot.id] = 'empty';
-      }
-    });
-    const sv = state.saved && state.saved.byType && state.saved.byType[t];
-    if (sv) {
-      Object.keys(sv).forEach(function (k) {
-        const slot = D.slotById[k];
-        if (slot && slot.types.indexOf(t) >= 0 && sv[k] && validValue(slot, sv[k].v, t)) {
-          b.values[k] = sv[k].v;
-          b.status[k] = sv[k].s === 'preset' ? 'preset' : 'manual';
-        }
-      });
+    const slot = D.slotById[id];
+    if (custom) {
+      if (commitCustom(slot)) advance();
+      return;
     }
-    state.byType[t] = b;
-    return b;
+    if (slot.kind === 'counter') {
+      setAns(slot.id, { s: 'answered', v: { counts: Object.assign({}, counts) } });
+      advance();
+      return;
+    }
+    const a = getAns(slot.id);
+    if (!a || a.s !== 'answered') { toast('請選一個項目，或按「略過這題」'); return; }
+    advance();
   }
 
-  function cur() {
-    return ensureType(state.type);
+  function onBack() {
+    clearTimeout(advanceTimer);
+    if (custom) { custom = false; renderStep(true); return; }
+    if (query) { query = ''; $('#wzSearch').value = ''; renderStep(true); return; }
+    if (path.length) { path.pop(); renderStep(true); return; }
+    if (step > 0) enterStep(step - 1);
+  }
+
+  function onSkip() {
+    const id = steps()[step];
+    if (id === 'type') return;
+    setAns(id, { s: 'skipped' });
+    advance();
+  }
+
+  function onBodyClick(e) {
+    const t = e.target.closest('[data-type]');
+    if (t) {
+      const id = t.getAttribute('data-type');
+      if (S.type !== id) { S.type = id; answers(); save(); }
+      renderStep(false);
+      clearTimeout(advanceTimer);
+      advanceTimer = setTimeout(advance, 380);
+      return;
+    }
+    const b = e.target.closest('[data-brand]');
+    if (b) { path = [b.getAttribute('data-brand')]; renderStep(true); return; }
+    const g = e.target.closest('[data-group]');
+    if (g) { path.push(g.getAttribute('data-group')); renderStep(true); return; }
+    const c = e.target.closest('[data-custom]');
+    if (c) { custom = true; renderStep(true); setTimeout(function () { const i = $('#cIdle'); if (i && root.getAttribute('data-device') !== 'touch') i.focus(); }, 60); return; }
+    const o = e.target.closest('[data-opt]');
+    if (o) {
+      const id = steps()[step];
+      setAns(id, { s: 'answered', v: { id: o.getAttribute('data-opt') } });
+      $$('#wzBody .ch').forEach(function (x) { x.classList.toggle('is-sel', x === o); });
+      renderNodes();
+      clearTimeout(advanceTimer);
+      advanceTimer = setTimeout(advance, 380);
+      return;
+    }
+    const s = e.target.closest('[data-step]');
+    if (s && counts) {
+      const slot = D.slotById[steps()[step]];
+      const iid = s.closest('[data-item]').getAttribute('data-item');
+      const it = slot.items.find(function (x) { return x.id === iid; });
+      counts[iid] = Math.max(0, Math.min(it.limit, (counts[iid] || 0) + (+s.getAttribute('data-step'))));
+      const row = s.closest('.ctr');
+      $('.ctr-num', row).textContent = counts[iid];
+      $('[data-step="-1"]', row).disabled = counts[iid] <= 0;
+      $('[data-step="1"]', row).disabled = counts[iid] >= it.limit;
+    }
   }
 
   function valueOf(slot, v) {
@@ -379,294 +553,29 @@
       let i = 0;
       let m = 0;
       slot.items.forEach(function (it) {
-        const c = v.counts[it.id] || 0;
+        const c = (v.counts && v.counts[it.id]) || 0;
         i += c * it.idle;
         m += c * it.max;
       });
       return { idle: i, max: m };
     }
     const o = optById(slot, v.id);
-    if (!o) return null;
-    return { idle: o.idle || 0, max: o.max || 0, eff: o.eff, opt: o };
+    if (!o || o.types.indexOf(S.type) < 0) return null;
+    return { idle: o.idle || 0, max: o.max || 0, eff: o.eff };
   }
 
   function describe(slot, v) {
-    if (!v) return { text: '尚未選擇', watt: '點擊選擇', rank: 1 };
-    if (v.custom) return { text: '自訂瓦數', watt: wattText(+v.idle, +v.max), rank: 3 };
+    if (v.custom) return '自己輸入';
     if (slot.kind === 'counter') {
       const parts = [];
       slot.items.forEach(function (it) {
-        const c = v.counts[it.id] || 0;
+        const c = (v.counts && v.counts[it.id]) || 0;
         if (c > 0) parts.push(it.short + ' ×' + c);
       });
-      const val = valueOf(slot, v);
-      const rank = val.max >= 40 ? 4 : val.max >= 15 ? 3 : val.max > 0 ? 2 : 1;
-      return { text: parts.length ? parts.join('、') : '無', watt: wattText(val.idle, val.max), rank: rank };
+      return parts.length ? parts.join('、') : '無';
     }
     const o = optById(slot, v.id);
-    if (!o) return { text: '尚未選擇', watt: '點擊選擇', rank: 1 };
-    if (slot.role === 'eff') return { text: o.name, watt: '轉換效率約 ' + Math.round(o.eff * 100) + '%', rank: o.rank };
-    return { text: o.name, watt: wattText(o.idle, o.max), rank: o.rank };
-  }
-
-  function renderTypeBar() {
-    let html = D.types.map(function (x) {
-      return '<button type="button" class="type-btn' + (x.id === state.type ? ' is-on' : '') + '" data-type="' + x.id + '">' +
-        '<i class="bi ' + x.icon + '"></i>' + x.name + '</button>';
-    }).join('');
-    const st = state.typeStatus;
-    html += '<span class="type-status"><em class="badge b-' + st + '">' + (st === 'manual' ? '已選擇' : STATUS[st]) + '</em></span>';
-    $('#typeBar').innerHTML = html;
-  }
-
-  function cardHtml(slot, i, animate) {
-    const t = state.type;
-    const b = cur();
-    const st = b.status[slot.id] || 'empty';
-    const v = b.values[slot.id];
-    const info = describe(slot, v);
-    const cls = 'slot r' + info.rank + (st === 'empty' ? ' is-empty' : '') + (animate ? ' rise' : '');
-    return '<button type="button" class="' + cls + '" style="--i:' + (i + 2) + '" data-slot="' + slot.id + '">' +
-      '<span class="slot-ico"><i class="bi ' + slot.icon + '"></i></span>' +
-      '<span class="slot-name">' + esc(slotName(slot, t)) + '<em class="badge b-' + st + '">' + STATUS[st] + '</em></span>' +
-      '<span class="slot-val">' + esc(info.text) + '</span>' +
-      '<span class="slot-foot"><span class="slot-w">' + esc(info.watt) + '</span>' +
-      (st === 'empty' ? '' : '<span class="stars">' + stars(info.rank) + '</span>') + '</span>' +
-      '</button>';
-  }
-
-  function renderParts(animate) {
-    if (!state) return;
-    renderTypeBar();
-    const list = slotsFor(state.type);
-    const grid = $('#slotGrid');
-    grid.classList.toggle('is-few', list.length <= 3);
-    grid.innerHTML = list.map(function (s, i) { return cardHtml(s, i, animate); }).join('');
-    updateHint();
-  }
-
-  function refreshCard(id) {
-    const el = $('.slot[data-slot="' + id + '"]');
-    if (!el) return;
-    const slot = D.slotById[id];
-    const i = slotsFor(state.type).indexOf(slot);
-    const tmp = document.createElement('div');
-    tmp.innerHTML = cardHtml(slot, i, false);
-    el.replaceWith(tmp.firstChild);
-    updateHint();
-  }
-
-  function emptySlots() {
-    const b = cur();
-    return slotsFor(state.type).filter(function (s) { return !b.values[s.id] || b.status[s.id] === 'empty'; });
-  }
-
-  function updateHint() {
-    const n = emptySlots().length;
-    const h = $('#partsHint');
-    h.classList.toggle('is-ok', n === 0);
-    h.innerHTML = n ? '還有<b>' + n + '</b>個零件讀不到，請點擊卡片自行選擇' : '<b><i class="bi bi-check-circle-fill"></i></b>零件都準備好了，可以計算電量';
-    $('#btnCalc').classList.toggle('is-locked', n > 0);
-  }
-
-  function hintFor(slot, t) {
-    const d = det;
-    const lines = [];
-    const g = guessSlot(slot, t);
-    if (slot.id === 'cpu') {
-      if (d.threads) lines.push('瀏覽器回報 <b>' + d.threads + ' 個執行緒</b>');
-      if (appleChip()) lines.push('顯示晶片名稱是 <b>' + esc(cleanGpu()) + '</b>');
-    }
-    if (slot.id === 'gpu') {
-      if (cleanGpu()) lines.push('偵測到 <b>' + esc(cleanGpu()) + '</b>');
-      else if (d.gl && d.gl.software) lines.push('瀏覽器目前使用軟體繪圖，讀不到顯示卡');
-      else lines.push('瀏覽器隱藏了顯示卡名稱');
-      if (d.gpu && d.gpu.vendor) lines.push('WebGPU 高效能顯示卡：<b>' + esc(d.gpu.vendor) + (d.gpu.architecture ? ' · ' + esc(d.gpu.architecture) : '') + '</b>');
-    }
-    if (slot.id === 'ram' && d.memory) lines.push('瀏覽器回報約 <b>' + (d.memory >= 8 ? '8 GB 以上' : d.memory + ' GB') + '</b>');
-    if (slot.id === 'storage' && d.storage) lines.push('瀏覽器可用空間約 <b>' + bytes(d.storage.quota) + '</b>（只是瀏覽器配額，不等於硬碟大小）');
-    if (slot.id === 'monitor' || slot.id === 'panel') {
-      lines.push('螢幕解析度 <b>' + d.screen.pw + '×' + d.screen.ph + '</b>' + (d.refresh ? '・更新率約 <b>' + d.refresh + ' Hz</b>' : '') + (d.screen.extended ? '・<b>偵測到多台螢幕</b>' : ''));
-    }
-    if (slot.id === 'charge' && d.battery && !d.battery.desktopLike) {
-      lines.push('電池 <b>' + Math.round(d.battery.level * 100) + '%</b>・' + (d.battery.charging ? '<b>充電中</b>' : '<b>使用電池中</b>'));
-    }
-    if (g) lines.push((g.status === 'detected' ? '已幫你選好' : '推測是') + '標記的項目，' + (g.status === 'detected' ? '有需要再修改。' : '請確認是否正確。'));
-    if (slot.tip) lines.push(slot.tip);
-    return lines.join('<br>');
-  }
-
-  function openSlot(id) {
-    const slot = D.slotById[id];
-    const t = state.type;
-    const b = cur();
-    const v = b.values[id];
-    const defCounts = slot.kind === 'counter' ? Object.assign({}, (slot.def && slot.def[t]) || {}) : null;
-    dlg = {
-      slot: slot,
-      sel: v && !v.custom && v.id ? v.id : null,
-      counts: v && v.counts ? Object.assign({}, v.counts) : defCounts,
-      guess: guessSlot(slot, t)
-    };
-    $('#mIcon').className = 'bi ' + slot.icon;
-    $('#mTitle').textContent = slotName(slot, t);
-    $('#mHint').innerHTML = hintFor(slot, t);
-    const search = $('#mSearch');
-    search.value = '';
-    $('#mSearchWrap').hidden = slot.kind === 'counter';
-    search.placeholder = slot.ph || '搜尋關鍵字';
-    const customOn = !!(v && v.custom);
-    $('#mCustom').hidden = slot.role === 'eff';
-    $('#mCustomOn').checked = customOn;
-    const cv = v && v.custom ? v : valueOf(slot, v || (dlg.counts ? { counts: dlg.counts } : null));
-    $('#mIdle').value = cv ? num(+cv.idle) : '';
-    $('#mMax').value = cv ? num(+cv.max) : '';
-    syncCustom();
-    renderBody();
-    const m = $('#modal');
-    m.hidden = false;
-    requestAnimationFrame(function () { requestAnimationFrame(function () { m.classList.add('is-open'); }); });
-    const body = $('#mBody');
-    const sel = $('.opt.is-sel', body);
-    body.scrollTop = sel ? Math.max(0, sel.offsetTop - body.clientHeight / 2 + sel.offsetHeight / 2) : 0;
-  }
-
-  function closeModal() {
-    const m = $('#modal');
-    if (m.hidden) return;
-    m.classList.remove('is-open');
-    if (document.activeElement && m.contains(document.activeElement)) document.activeElement.blur();
-    setTimeout(function () { if (!m.classList.contains('is-open')) m.hidden = true; }, 300);
-    dlg = null;
-  }
-
-  function syncCustom() {
-    const on = $('#mCustomOn').checked;
-    $('#mIdle').disabled = !on;
-    $('#mMax').disabled = !on;
-    $('#mBody').style.opacity = on ? '.45' : '';
-  }
-
-  function renderBody() {
-    const slot = dlg.slot;
-    const t = state.type;
-    const body = $('#mBody');
-    if (slot.kind === 'counter') {
-      body.innerHTML = slot.items.map(function (it) {
-        const c = dlg.counts[it.id] || 0;
-        return '<div class="ctr" data-item="' + it.id + '">' +
-          '<p class="ctr-name">' + esc(it.name) + '<span class="ctr-w">每個 ' + wattText(it.idle, it.max) + '</span></p>' +
-          '<div class="ctr-pad"><button type="button" data-step="-1" aria-label="減少"' + (c <= 0 ? ' disabled' : '') + '><i class="bi bi-dash-lg"></i></button>' +
-          '<span class="ctr-num">' + c + '</span>' +
-          '<button type="button" data-step="1" aria-label="增加"' + (c >= it.limit ? ' disabled' : '') + '><i class="bi bi-plus-lg"></i></button></div>' +
-          '</div>';
-      }).join('');
-      return;
-    }
-    const q = $('#mSearch').value.trim().toLowerCase().replace(/\s+/g, ' ');
-    const hit = function (o) {
-      if (!q) return true;
-      const hay = (o.name + ' ' + (o.desc || '') + ' ' + (o.key || '')).toLowerCase();
-      const flat = hay.replace(/[\s\-／・、（）()]/g, '');
-      return q.split(' ').every(function (w) { return hay.indexOf(w) >= 0 || flat.indexOf(w.replace(/[\-／・、（）()]/g, '')) >= 0; });
-    };
-    const opts = optionsFor(slot, t).filter(hit);
-    if (!opts.length) {
-      const others = [];
-      (slot.options || []).filter(hit).forEach(function (o) {
-        o.types.forEach(function (x) {
-          if (x !== t && slot.types.indexOf(x) >= 0 && others.indexOf(x) < 0) others.push(x);
-        });
-      });
-      const names = others.map(function (x) { return '「' + D.typeById[x].name + '」'; }).join('、');
-      body.innerHTML = '<p class="opt-empty">' + (others.length
-        ? '目前裝置類型是「' + esc(D.typeById[t].name) + '」，符合的項目在 ' + names + ' 裡，<br>切換裝置類型後就能選擇。'
-        : '找不到符合的項目，可以改用下方的「自訂瓦數」。') + '</p>';
-      return;
-    }
-    const groups = [];
-    const map = {};
-    opts.forEach(function (o) {
-      const g = o.group || '';
-      if (!map[g]) { map[g] = []; groups.push(g); }
-      map[g].push(o);
-    });
-    const gid = dlg.guess && dlg.guess.v && dlg.guess.v.id;
-    body.innerHTML = groups.map(function (g) {
-      return (g && groups.length > 1 ? '<p class="opt-group">' + esc(g) + '</p>' : '') +
-        '<div class="opt-grid">' + map[g].map(function (o) {
-          const tag = o.id === gid ? '<em class="badge b-' + dlg.guess.status + '">' + STATUS[dlg.guess.status] + '</em>' : '';
-          const w = slot.role === 'eff' ? '效率 ' + Math.round(o.eff * 100) + '%' : wattText(o.idle, o.max);
-          return '<button type="button" class="opt r' + o.rank + (o.id === dlg.sel ? ' is-sel' : '') + '" data-opt="' + o.id + '">' +
-            '<span class="opt-name">' + esc(o.name) + tag + '</span>' +
-            '<span class="opt-w">' + w + '</span>' +
-            '<span class="opt-desc">' + esc(o.desc || '') + '</span>' +
-            '</button>';
-        }).join('') + '</div>';
-    }).join('');
-  }
-
-  function commit() {
-    if (!dlg) return;
-    const slot = dlg.slot;
-    const b = cur();
-    let v;
-    if ($('#mCustomOn').checked && slot.role !== 'eff') {
-      const idle = parseFloat($('#mIdle').value);
-      const max = parseFloat($('#mMax').value);
-      if (!isFinite(idle) || !isFinite(max) || idle < 0 || max < 0) { toast('請輸入最小與最大瓦數'); return; }
-      if (max < idle) { toast('最大瓦數不能小於最小瓦數'); return; }
-      if (max > 5000) { toast('瓦數太大了，請確認數值'); return; }
-      v = { custom: true, idle: idle, max: max };
-    } else if (slot.kind === 'counter') {
-      v = { counts: Object.assign({}, dlg.counts) };
-    } else {
-      if (!dlg.sel) { toast('請先選擇一個項目'); return; }
-      v = { id: dlg.sel };
-    }
-    b.values[slot.id] = v;
-    b.status[slot.id] = 'manual';
-    const id = slot.id;
-    closeModal();
-    refreshCard(id);
-    save();
-  }
-
-  function quickFill() {
-    const b = cur();
-    const t = state.type;
-    let n = 0;
-    slotsFor(t).forEach(function (slot) {
-      if (b.values[slot.id] && b.status[slot.id] !== 'empty') return;
-      const def = slot.def && slot.def[t];
-      if (def == null) return;
-      b.values[slot.id] = slot.kind === 'counter' ? { counts: Object.assign({}, def) } : { id: def };
-      b.status[slot.id] = 'preset';
-      n++;
-    });
-    if (!n) { toast('沒有需要填入的項目'); return; }
-    renderParts(false);
-    save();
-    toast('已填入 ' + n + ' 個常見值，可以再點卡片調整');
-  }
-
-  function resetType() {
-    const t = state.type;
-    if (state.saved && state.saved.byType) delete state.saved.byType[t];
-    delete state.byType[t];
-    ensureType(t);
-    renderParts(false);
-    save();
-    toast('已清除，恢復成偵測結果');
-  }
-
-  function setType(t) {
-    if (!D.typeById[t] || (t === state.type && state.typeStatus === 'manual')) return;
-    state.type = t;
-    state.typeStatus = 'manual';
-    ensureType(t);
-    renderParts(true);
-    save();
+    return o ? o.name : '';
   }
 
   function snap(list, need) {
@@ -675,32 +584,37 @@
   }
 
   function compute() {
-    const t = state.type;
-    const b = cur();
+    const t = S.type;
+    const A = answers();
     const base = D.base[t];
     let dcI = base.idle;
     let dcM = base.max;
     let wI = 0;
     let wM = 0;
-    let effL = D.adapter[t] ? D.adapter[t].load : 0.85;
-    let effI = D.adapter[t] ? D.adapter[t].idle : 0.77;
+    let effL = D.adapter[t].load;
+    let effI = D.adapter[t].idle;
+    let effGuess = t === 'desktop';
     const rows = [];
+    const skipped = [];
+    let filled = 0;
     if (base.max > 0) rows.push({ name: D.baseName[t], icon: 'bi-motherboard', idle: base.idle, max: base.max });
     slotsFor(t).forEach(function (slot) {
-      const val = valueOf(slot, b.values[slot.id]);
-      if (!val) return;
+      const a = A[slot.id];
+      const val = a && a.s === 'answered' ? valueOf(slot, a.v) : null;
+      if (!val) { skipped.push(slot); return; }
+      filled++;
       if (slot.role === 'eff') {
         effL = val.eff;
         effI = Math.max(0.6, val.eff - 0.08);
+        effGuess = false;
         return;
       }
-      const info = describe(slot, b.values[slot.id]);
-      rows.push({ name: slotName(slot, t), sub: info.text, icon: slot.icon, idle: val.idle, max: val.max, wall: slot.role === 'wall' });
+      rows.push({ id: slot.id, name: slotName(slot, t), sub: describe(slot, a.v), icon: slot.icon, idle: val.idle, max: val.max, wall: slot.role === 'wall' });
       if (slot.role === 'wall') { wI += val.idle; wM += val.max; } else { dcI += val.idle; dcM += val.max; }
     });
     const hostI = dcI / effI;
     const hostM = dcM / effL;
-    rows.push({ name: '電源轉換損耗', sub: '效率約 ' + Math.round(effL * 100) + '%', icon: 'bi-fire', idle: hostI - dcI, max: hostM - dcM });
+    rows.push({ name: '電源轉換損耗', sub: '效率約 ' + Math.round(effL * 100) + '%' + (effGuess && t === 'desktop' ? '（未填，以銅牌估算）' : ''), icon: 'bi-fire', idle: hostI - dcI, max: hostM - dcM });
     let rec;
     if (t === 'desktop') {
       rec = { label: '建議電源供應器', value: snap([350, 450, 550, 650, 750, 850, 1000, 1200, 1300, 1600, 2000], dcM * 1.3), note: '主機滿載約 ' + num(dcM) + ' W，再預留 30% 餘裕' };
@@ -709,7 +623,7 @@
     } else {
       rec = { label: '建議變壓器', value: snap([45, 65, 90, 100, 120, 140, 180, 200, 230, 240, 280, 330], dcM * 1.1), note: '機身滿載含充電約 ' + num(dcM) + ' W' };
     }
-    return { min: hostI + wI, max: hostM + wM, rows: rows, rec: rec };
+    return { min: hostI + wI, max: hostM + wM, rows: rows, skipped: skipped, filled: filled, rec: rec };
   }
 
   function rating(max) {
@@ -718,10 +632,8 @@
     return { title: '', stars: 1 };
   }
 
-  let lastResult = null;
-
   function renderResult() {
-    if (!state) return;
+    if (!S.type) return;
     const r = compute();
     lastResult = r;
     const rt = rating(r.max);
@@ -736,24 +648,29 @@
     $('#gMax').style.strokeDashoffset = GAUGE_LEN;
     const rows = r.rows.filter(function (x) { return x.max > 0 || x.idle > 0; }).sort(function (a, b) { return b.max - a.max; });
     const top = rows.length ? rows[0].max : 1;
-    $('#breakList').innerHTML = rows.map(function (x) {
-      return '<li class="break-item"><i class="bi ' + x.icon + '"></i>' +
+    let html = rows.map(function (x) {
+      return '<li class="break-item"' + (x.id ? ' data-jump="' + x.id + '" title="修改這一題"' : '') + '><i class="bi ' + x.icon + '"></i>' +
         '<p class="bi-name">' + esc(x.name) + (x.sub ? '<em>' + esc(x.sub) + '</em>' : '') + (x.wall ? '<em>另接插座</em>' : '') + '</p>' +
         '<p class="bi-w">' + wattText(x.idle, x.max) + '</p>' +
         '<div class="bi-bar"><span class="bm" data-w="' + (x.max / top * 100).toFixed(2) + '"></span><span class="bn" data-w="' + (x.idle / top * 100).toFixed(2) + '"></span></div>' +
         '</li>';
     }).join('');
+    html += r.skipped.map(function (s) {
+      return '<li class="break-skip"><i class="bi ' + s.icon + '"></i><p class="bi-name">' + esc(slotName(s, S.type)) + '<em>未填寫，不計入</em></p>' +
+        '<button type="button" class="skip-btn" data-jump="' + s.id + '"><i class="bi bi-pencil"></i>補填</button></li>';
+    }).join('');
+    $('#breakList').innerHTML = html;
     $('#breakList').scrollTop = 0;
+    $('#breakNote').textContent = (r.filled === 0 ? '你還沒有填任何零件，按「修改答案」開始填寫。' : '') +
+      '最大電量是所有零件同時滿載的理論值，實際使用通常介於兩者之間。數值為估算，僅供參考。點項目可以修改。';
     updateDaily();
   }
 
   function countUp(el, to) {
     const start = performance.now();
-    const dur = 1300;
     function f(now) {
-      const p = Math.min(1, (now - start) / dur);
-      const e = 1 - Math.pow(1 - p, 3);
-      el.textContent = num(to * e);
+      const p = Math.min(1, (now - start) / 1300);
+      el.textContent = num(to * (1 - Math.pow(1 - p, 3)));
       if (p < 1) requestAnimationFrame(f);
     }
     requestAnimationFrame(f);
@@ -783,162 +700,68 @@
     $('#dailyOut').innerHTML = '每天約 <b>' + kwh(dMin) + '～' + kwh(dMax) + '</b> 度<br>每月約 <b>' + kwh(dMin * 30) + '～' + kwh(dMax * 30) + '</b> 度';
   }
 
-  function scanLines() {
-    const d = det;
-    const g = state.guessType;
-    const gpu = cleanGpu();
-    const lines = [];
-    lines.push({ icon: d.os.icon, label: '作業系統', value: (d.os.name || '無法讀取') + (d.arch ? ' · ' + d.arch : ''), st: d.os.name ? 'ok' : 'fail' });
-    lines.push({ icon: D.typeById[g.id].icon, label: '裝置類型', value: D.typeById[g.id].name, st: g.status === 'detected' ? 'ok' : 'part' });
-    lines.push({ icon: 'bi-cpu', label: '處理器', value: d.threads ? d.threads + ' 個執行緒' : '無法讀取', st: d.threads ? 'part' : 'fail' });
-    lines.push({ icon: 'bi-gpu-card', label: '顯示晶片', value: gpu || (d.gl && d.gl.software ? '軟體繪圖中，無法判斷' : '無法讀取'), st: gpu ? 'ok' : 'fail' });
-    lines.push({ icon: 'bi-memory', label: '記憶體', value: d.memory ? (d.memory >= 8 ? '8 GB 以上' : '約 ' + d.memory + ' GB') : '無法讀取', st: d.memory ? 'part' : 'fail' });
-    lines.push({ icon: 'bi-display', label: '螢幕', value: d.screen.pw + '×' + d.screen.ph + (d.refresh ? ' · ' + d.refresh + ' Hz' : '') + (d.screen.extended ? ' · 多螢幕' : ''), st: 'ok' });
-    let bat = '無法讀取';
-    let bst = 'fail';
-    if (d.battery) {
-      if (d.battery.desktopLike) { bat = '未偵測到電池（或已充飽）'; bst = 'part'; }
-      else { bat = Math.round(d.battery.level * 100) + '% · ' + (d.battery.charging ? '充電中' : '使用電池中'); bst = 'ok'; }
-    }
-    lines.push({ icon: 'bi-battery-half', label: '電池', value: bat, st: bst });
-    lines.push({ icon: 'bi-device-ssd', label: '儲存空間', value: d.storage ? '瀏覽器配額約 ' + bytes(d.storage.quota) : '無法讀取', st: 'fail' });
-    lines.push({ icon: 'bi-hand-index', label: '觸控', value: d.screen.touch ? '支援 ' + d.screen.touch + ' 點觸控' : '不支援觸控', st: 'ok' });
-    return lines;
-  }
-
-  async function runScan() {
-    const id = ++scanRun;
-    const scene = $('.scene-scan');
-    const list = $('#scanList');
-    const pct = $('#scanPct');
-    const btn = $('#btnToParts');
-    list.innerHTML = '';
-    pct.textContent = '0';
-    btn.disabled = true;
-    $('#scanState').textContent = '掃描中';
-    scene.classList.add('is-scanning');
-    scene.classList.remove('is-done');
-    if (state) save();
-    if (!detPromise) detPromise = window.MDDetect.run();
-    det = await detPromise;
-    if (id !== scanRun) return;
-    initState();
-    await wait(500);
-    const lines = scanLines();
-    const st = { ok: '已讀取', part: '部分讀取', fail: '需手動選擇' };
-    for (let i = 0; i < lines.length; i++) {
-      if (id !== scanRun) return;
-      const l = lines[i];
-      const li = document.createElement('li');
-      li.className = 'scan-item st-' + l.st;
-      li.innerHTML = '<i class="bi ' + l.icon + '"></i><span class="si-label">' + esc(l.label) + '</span>' +
-        '<span class="si-value" title="' + esc(l.value) + '">' + esc(l.value) + '</span><span class="si-state">' + st[l.st] + '</span>';
-      list.appendChild(li);
-      pct.textContent = Math.round((i + 1) / lines.length * 100);
-      await wait(240);
-    }
-    if (id !== scanRun) return;
-    scene.classList.remove('is-scanning');
-    scene.classList.add('is-done');
-    $('#scanState').textContent = '掃描完成';
-    btn.disabled = false;
-  }
-
-  function rescan() {
-    detPromise = window.MDDetect.run();
-    go('scan');
+  function jumpTo(id) {
+    const i = steps().indexOf(id);
+    if (i < 0) return;
+    go('wizard');
+    enterStep(i);
   }
 
   function toggleFull() {
-    const el = document.documentElement;
     if (document.fullscreenElement) document.exitFullscreen();
-    else if (el.requestFullscreen) el.requestFullscreen().catch(function () { toast('這個瀏覽器不支援全螢幕'); });
+    else document.documentElement.requestFullscreen().catch(function () { toast('這個瀏覽器不支援全螢幕'); });
   }
 
   function bind() {
-    $('#btnStart').addEventListener('click', function () { go('scan'); });
-    $('#btnToParts').addEventListener('click', function () { go('parts'); });
+    $('#btnStart').addEventListener('click', function () {
+      go('wizard');
+      enterStep(0);
+    });
+    $('#btnClear').addEventListener('click', function () {
+      S = { type: null, ans: {} };
+      save();
+      toast('已清除上次的答案');
+    });
     $('#hudHome').addEventListener('click', function () { go('cover'); });
-    $('#hudRescan').addEventListener('click', rescan);
     const full = $('#hudFull');
     if (!document.documentElement.requestFullscreen) full.hidden = true;
     full.addEventListener('click', toggleFull);
     document.addEventListener('fullscreenchange', function () {
-      full.querySelector('i').className = 'bi ' + (document.fullscreenElement ? 'bi-fullscreen-exit' : 'bi-arrows-fullscreen');
+      $('i', full).className = 'bi ' + (document.fullscreenElement ? 'bi-fullscreen-exit' : 'bi-arrows-fullscreen');
     });
-
     $$('[data-go]').forEach(function (b) {
       b.addEventListener('click', function () { go(b.getAttribute('data-go')); });
     });
-
-    $('#typeBar').addEventListener('click', function (e) {
-      const b = e.target.closest('[data-type]');
-      if (b) setType(b.getAttribute('data-type'));
+    $('#btnEdit').addEventListener('click', function () {
+      go('wizard');
+      enterStep(1);
+    });
+    $('#breakList').addEventListener('click', function (e) {
+      const j = e.target.closest('[data-jump]');
+      if (j) jumpTo(j.getAttribute('data-jump'));
     });
 
-    $('#slotGrid').addEventListener('click', function (e) {
-      const b = e.target.closest('[data-slot]');
-      if (b) openSlot(b.getAttribute('data-slot'));
+    $('#wzBody').addEventListener('click', onBodyClick);
+    $('#wzNodes').addEventListener('click', function (e) {
+      const n = e.target.closest('[data-node]');
+      if (!n) return;
+      const i = +n.getAttribute('data-node');
+      if (i > 0 && !S.type) return;
+      enterStep(i);
     });
-
-    $('#btnQuick').addEventListener('click', quickFill);
-    $('#btnReset').addEventListener('click', resetType);
-
-    $('#btnCalc').addEventListener('click', function () {
-      const empty = emptySlots();
-      if (empty.length) {
-        toast('還有 ' + empty.length + ' 個零件待選擇，或按「一鍵填入常見值」');
-        empty.forEach(function (s) {
-          const el = $('.slot[data-slot="' + s.id + '"]');
-          if (!el) return;
-          el.classList.remove('is-shake');
-          void el.offsetWidth;
-          el.classList.add('is-shake');
-        });
-        return;
-      }
-      go('result');
+    $('#wzNext').addEventListener('click', onNext);
+    $('#wzBack').addEventListener('click', onBack);
+    $('#wzSkip').addEventListener('click', onSkip);
+    $('#wzSearch').addEventListener('input', function () {
+      query = this.value;
+      clearTimeout(advanceTimer);
+      renderStep(false);
     });
-
-    const modal = $('#modal');
-    modal.addEventListener('click', function (e) {
-      if (e.target.closest('[data-close]')) { closeModal(); return; }
-      const o = e.target.closest('[data-opt]');
-      if (o && dlg) {
-        $('#mCustomOn').checked = false;
-        syncCustom();
-        dlg.sel = o.getAttribute('data-opt');
-        $$('.opt', modal).forEach(function (x) { x.classList.toggle('is-sel', x === o); });
-        const val = valueOf(dlg.slot, { id: dlg.sel });
-        if (val && dlg.slot.role !== 'eff') {
-          $('#mIdle').value = num(val.idle);
-          $('#mMax').value = num(val.max);
-        }
-        return;
-      }
-      const s = e.target.closest('[data-step]');
-      if (s && dlg) {
-        $('#mCustomOn').checked = false;
-        syncCustom();
-        const id = s.closest('[data-item]').getAttribute('data-item');
-        const it = dlg.slot.items.find(function (x) { return x.id === id; });
-        const c = Math.max(0, Math.min(it.limit, (dlg.counts[id] || 0) + (+s.getAttribute('data-step'))));
-        dlg.counts[id] = c;
-        renderBody();
-        const val = valueOf(dlg.slot, { counts: dlg.counts });
-        $('#mIdle').value = num(val.idle);
-        $('#mMax').value = num(val.max);
-      }
-    });
-    modal.addEventListener('dblclick', function (e) {
-      if (e.target.closest('[data-opt]')) commit();
-    });
-    $('#mOk').addEventListener('click', commit);
-    $('#mCustomOn').addEventListener('change', syncCustom);
-    $('#mSearch').addEventListener('input', function () { if (dlg) renderBody(); });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape') closeModal();
-      if (e.key === 'Enter' && dlg && e.target && e.target.tagName === 'INPUT' && e.target.type === 'number') commit();
+      if (e.key === 'Enter' && e.target && e.target.tagName === 'INPUT' && e.target.type === 'number' && custom) {
+        e.preventDefault();
+        onNext();
+      }
     });
 
     const hours = $('#hours');
@@ -960,8 +783,10 @@
   }
 
   fit();
+  load();
   makeStars();
   inlineEmblem();
   bind();
+  updateClear();
   boot();
 })();

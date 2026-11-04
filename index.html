@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>我的電腦</title>
-<meta name="description" content="讀取你的電腦硬體資訊，算出所需的最小電量與最大電量。">
+<meta name="description" content="一步步填寫電腦硬體，算出所需的最小電量與最大電量。">
 <meta name="theme-color" content="#070c22">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -97,51 +97,36 @@
       <div class="cover-text">
         <p class="cover-en rise" style="--i:1">MY DEVICE</p>
         <h1 class="cover-title rise" style="--i:2">我的電腦</h1>
-        <p class="cover-sub rise" style="--i:3">讀取硬體資訊・試算最小與最大電量</p>
+        <p class="cover-sub rise" style="--i:3">一步步填寫硬體・試算最小與最大電量</p>
       </div>
       <button class="btn-main rise" style="--i:4" type="button" id="btnStart">
-        <span class="btn-ico"><i class="bi bi-radar"></i></span><span class="btn-label">開始掃描</span>
+        <span class="btn-ico"><i class="bi bi-play-fill"></i></span><span class="btn-label">開始填寫</span>
       </button>
-      <p class="cover-note rise" style="--i:5"><i class="bi bi-shield-check"></i>所有偵測都在你的瀏覽器裡完成，不會上傳任何資料</p>
+      <button class="link-btn rise" style="--i:5" type="button" id="btnClear" hidden><i class="bi bi-arrow-counterclockwise"></i>清除上次的答案，重新填寫</button>
+      <p class="cover-note rise" style="--i:6"><i class="bi bi-shield-check"></i>每一題都可以略過，答案只存在你的瀏覽器裡</p>
     </section>
 
-    <section class="scene scene-scan" data-scene="scan">
-      <div class="scene-head rise" style="--i:0">
-        <p class="head-en">SCANNING</p>
-        <h2 class="head-title">硬體掃描</h2>
+    <section class="scene scene-wizard" data-scene="wizard">
+      <div class="wz-top">
+        <p class="wz-step" id="wzStep"></p>
+        <ol class="wz-nodes" id="wzNodes"></ol>
       </div>
-      <div class="scan-radar rise" style="--i:1">
-        <div class="radar-face"></div>
-        <div class="radar-sweep"></div>
-        <div class="radar-core">
-          <p class="radar-pct"><span id="scanPct">0</span><small>%</small></p>
-          <p class="radar-state" id="scanState">掃描中</p>
-        </div>
+      <div class="wz-main" id="wzMain">
+        <h2 class="wz-q" id="wzQ"></h2>
+        <p class="wz-crumb" id="wzCrumb"></p>
+        <div class="wz-help" id="wzHelp"></div>
+        <label class="wz-search" id="wzSearchWrap">
+          <i class="bi bi-search"></i>
+          <input type="search" id="wzSearch" autocomplete="off">
+        </label>
+        <div class="wz-body" id="wzBody"></div>
       </div>
-      <ul class="scan-list" id="scanList"></ul>
-      <div class="scene-foot">
-        <button class="btn-main" type="button" id="btnToParts" disabled>
-          <span class="btn-ico"><i class="bi bi-grid-3x3-gap-fill"></i></span><span class="btn-label">配置零件</span>
+      <div class="scene-foot wz-foot">
+        <button class="btn-sub" type="button" id="wzBack"><i class="bi bi-chevron-left"></i>上一步</button>
+        <button class="btn-sub" type="button" id="wzSkip"><i class="bi bi-skip-forward-fill"></i>略過這題</button>
+        <button class="btn-main" type="button" id="wzNext">
+          <span class="btn-ico"><i class="bi bi-chevron-right"></i></span><span class="btn-label" id="wzNextLabel">下一步</span>
         </button>
-      </div>
-    </section>
-
-    <section class="scene scene-parts" data-scene="parts">
-      <div class="scene-head rise" style="--i:0">
-        <p class="head-en">LOADOUT</p>
-        <h2 class="head-title">零件配置</h2>
-      </div>
-      <div class="type-bar rise" style="--i:1" id="typeBar"></div>
-      <div class="slot-grid" id="slotGrid"></div>
-      <div class="parts-foot">
-        <p class="parts-hint" id="partsHint"></p>
-        <div class="parts-actions">
-          <button class="btn-sub" type="button" id="btnQuick"><i class="bi bi-magic"></i>一鍵填入常見值</button>
-          <button class="btn-main" type="button" id="btnCalc">
-            <span class="btn-ico"><i class="bi bi-lightning-charge-fill"></i></span><span class="btn-label">計算電量</span>
-          </button>
-        </div>
-        <button class="link-btn" type="button" id="btnReset"><i class="bi bi-arrow-counterclockwise"></i>清除這個裝置類型的選擇</button>
       </div>
     </section>
 
@@ -198,41 +183,14 @@
             <p class="break-legend"><span class="lg-min"></span>最小<span class="lg-max"></span>最大</p>
           </div>
           <ul class="break-list" id="breakList"></ul>
-          <p class="break-note">最大電量是所有零件同時滿載的理論值，實際使用通常介於兩者之間。數值為估算，僅供參考。</p>
+          <p class="break-note" id="breakNote">最大電量是所有零件同時滿載的理論值，實際使用通常介於兩者之間。數值為估算，僅供參考。</p>
         </div>
       </div>
       <div class="scene-foot res-foot">
-        <button class="btn-sub" type="button" data-go="parts"><i class="bi bi-sliders"></i>調整零件</button>
+        <button class="btn-sub" type="button" id="btnEdit"><i class="bi bi-pencil-square"></i>修改答案</button>
         <button class="btn-sub" type="button" data-go="cover"><i class="bi bi-house-door"></i>回到首頁</button>
       </div>
     </section>
-
-    <div class="modal" id="modal" hidden>
-      <div class="modal-mask" data-close></div>
-      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="mTitle">
-        <div class="modal-head">
-          <span class="modal-ico"><i class="bi" id="mIcon"></i></span>
-          <h3 class="modal-title" id="mTitle"></h3>
-          <button class="modal-x" type="button" data-close aria-label="關閉"><i class="bi bi-x-lg"></i></button>
-        </div>
-        <div class="modal-hint" id="mHint"></div>
-        <label class="modal-search" id="mSearchWrap">
-          <i class="bi bi-search"></i>
-          <input type="search" id="mSearch" placeholder="搜尋型號，例如 4070" autocomplete="off">
-        </label>
-        <div class="modal-body" id="mBody"></div>
-        <div class="modal-custom" id="mCustom">
-          <label class="custom-toggle"><input type="checkbox" id="mCustomOn"><span>自訂瓦數</span></label>
-          <label class="custom-field">最小<input type="number" id="mIdle" min="0" max="5000" step="0.1" inputmode="decimal">W</label>
-          <label class="custom-field">最大<input type="number" id="mMax" min="0" max="5000" step="0.1" inputmode="decimal">W</label>
-        </div>
-        <div class="modal-foot">
-          <button class="btn-main btn-sm" type="button" id="mOk">
-            <span class="btn-ico"><i class="bi bi-check2"></i></span><span class="btn-label">確定</span>
-          </button>
-        </div>
-      </div>
-    </div>
 
   </div>
 </div>
@@ -243,7 +201,6 @@
     <span class="hud-brand-text">我的電腦</span>
   </button>
   <div class="hud-right">
-    <button class="hud-btn" type="button" id="hudRescan" aria-label="重新掃描" title="重新掃描"><i class="bi bi-arrow-repeat"></i></button>
     <button class="hud-btn" type="button" id="hudFull" aria-label="全螢幕" title="全螢幕"><i class="bi bi-arrows-fullscreen"></i></button>
   </div>
 </header>
@@ -251,7 +208,6 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="js/data.js"></script>
-<script src="js/detect.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
