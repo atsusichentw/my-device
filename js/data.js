@@ -308,7 +308,7 @@ window.MD = (function () {
     {
       id: 'charge', name: '電池充電', icon: 'bi-battery-charging', types: ['laptop', 'mobile'], kind: 'option',
       qs: ['使用時會同時充電嗎？'],
-      help: '邊用邊充電時，充電器要同時供應機器和電池，最大電量會增加。想知道充電器要多大，建議選會充電的選項。',
+      help: '邊用邊充電時，充電器要同時供應機器和電池，最大電量會增加。',
       options: [
         o('chg-none', '', '不會', '電池已充滿或不充電', 0, 0, 1, ['laptop']),
         o('chg-normal', '', '邊用邊充電', '一般充電速度', 0, 30, 3, ['laptop']),

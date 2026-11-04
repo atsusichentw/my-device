@@ -293,17 +293,11 @@
   function leafCards(slot, leaves) {
     const a = getAns(slot.id);
     const sel = a && a.s === 'answered' && a.v && a.v.id;
-    const big = leaves.length <= 4;
     const cards = leaves.map(function (o) {
       const side = slot.role === 'eff' ? '效率 ' + Math.round(o.eff * 100) + '%' : wattText(o.idle, o.max);
-      return chCard('data-opt="' + o.id + '"', o, { sel: o.id === sel, side: side, icon: big ? slot.icon : null });
+      return chCard('data-opt="' + o.id + '"', o, { sel: o.id === sel, side: side });
     });
-    if (slot.role !== 'eff') cards.push(customCard(big));
-    return grid(cards, cards.length, big && cards.length <= 5);
-  }
-
-  function customCard(big) {
-    return chCard('data-custom="1"', { name: '自己輸入瓦數', desc: '知道確切耗電時使用', rank: 1 }, { cls: 'ch-custom', icon: big ? 'bi-pencil-square' : 'bi-pencil-square', more: true });
+    return grid(cards, cards.length, false);
   }
 
   function hit(o, q) {
@@ -332,9 +326,9 @@
     });
     if (others.length) {
       return '<p class="wz-empty">目前裝置類型是「' + esc(D.typeById[S.type].name) + '」，符合的項目在 ' +
-        others.map(function (x) { return '「' + D.typeById[x].name + '」'; }).join('、') + ' 裡。<br>可以回到第一步換裝置類型，或改用「自己輸入瓦數」。</p>' + grid([customCard(false)], 1, false);
+        others.map(function (x) { return '「' + D.typeById[x].name + '」'; }).join('、') + ' 裡。<br>可以回到第一步換裝置類型，或按右上的「自己輸入瓦數」。</p>';
     }
-    return '<p class="wz-empty">找不到符合的項目，可以換個關鍵字，或改用「自己輸入瓦數」。</p>' + grid([customCard(false)], 1, false);
+    return '<p class="wz-empty">找不到符合的項目，可以換個關鍵字，或按右上的「自己輸入瓦數」。</p>';
   }
 
   function renderCustom(slot) {
@@ -365,7 +359,7 @@
         '<span class="ctr-num">' + c + '</span>' +
         '<button type="button" data-step="1" aria-label="增加"' + (c >= it.limit ? ' disabled' : '') + '><i class="bi bi-plus-lg"></i></button></div>' +
         '</div>';
-    }).join('') + '</div>' + '<div class="ctr-more">' + grid([customCard(false)], 1, false) + '</div>';
+    }).join('') + '</div>';
   }
 
   function renderStep(animate) {
@@ -421,7 +415,7 @@
             body = grid(lv.tr.brands.map(function (b) {
               const meta = D.brands[b] || { icon: slot.icon, desc: '' };
               return chCard('data-brand="' + esc(b) + '"', { name: b, desc: meta.desc, rank: 3 }, { icon: meta.icon, more: !big });
-            }).concat(big ? [] : [customCard(false)]), lv.tr.brands.length, big);
+            }), lv.tr.brands.length, big);
           } else if (lv.kind === 'group') {
             q = slot.qs[Math.min(lv.depth, slot.qs.length - 1)];
             body = grid(lv.groups.map(function (g) {
@@ -440,6 +434,8 @@
     $('#wzCrumb').textContent = crumb;
     $('#wzHelp').textContent = help;
     $('#wzSearchWrap').hidden = !search;
+    $('#wzCustom').hidden = id === 'type' || custom || D.slotById[id].role === 'eff';
+    $('#wzTools').hidden = $('#wzSearchWrap').hidden && $('#wzCustom').hidden;
     $('#wzSearch').placeholder = ph;
     $('#wzBody').innerHTML = body;
     $('#wzBody').scrollTop = 0;
@@ -448,6 +444,12 @@
       const b = $('#wzBody');
       b.scrollTop = Math.max(0, sel.offsetTop - b.clientHeight / 2 + sel.offsetHeight / 2);
     }
+    updateMore();
+  }
+
+  function updateMore() {
+    const b = $('#wzBody');
+    b.classList.toggle('is-more', b.scrollTop + b.clientHeight < b.scrollHeight - 6);
   }
 
   function advance() {
@@ -521,8 +523,6 @@
     if (b) { path = [b.getAttribute('data-brand')]; renderStep(true); return; }
     const g = e.target.closest('[data-group]');
     if (g) { path.push(g.getAttribute('data-group')); renderStep(true); return; }
-    const c = e.target.closest('[data-custom]');
-    if (c) { custom = true; renderStep(true); setTimeout(function () { const i = $('#cIdle'); if (i && root.getAttribute('data-device') !== 'touch') i.focus(); }, 60); return; }
     const o = e.target.closest('[data-opt]');
     if (o) {
       const id = steps()[step];
@@ -739,6 +739,7 @@
     });
 
     $('#wzBody').addEventListener('click', onBodyClick);
+    $('#wzBody').addEventListener('scroll', updateMore, { passive: true });
     $('#wzNodes').addEventListener('click', function (e) {
       const n = e.target.closest('[data-node]');
       if (!n) return;
@@ -749,6 +750,12 @@
     $('#wzNext').addEventListener('click', onNext);
     $('#wzBack').addEventListener('click', onBack);
     $('#wzSkip').addEventListener('click', onSkip);
+    $('#wzCustom').addEventListener('click', function () {
+      clearTimeout(advanceTimer);
+      custom = true;
+      renderStep(true);
+      setTimeout(function () { const i = $('#cIdle'); if (i && root.getAttribute('data-device') !== 'touch') i.focus(); }, 60);
+    });
     $('#wzSearch').addEventListener('input', function () {
       query = this.value;
       clearTimeout(advanceTimer);
