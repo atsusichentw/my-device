@@ -193,12 +193,14 @@ window.MD = (function () {
     {
       id: 'cpu', name: '處理器', names: { mobile: '處理器晶片' }, icon: 'bi-cpu', types: ALL, kind: 'option',
       tip: '瀏覽器只能讀到執行緒數量，讀不到型號，請挑最接近的一項。',
+      ph: '搜尋型號，例如 13700、Ryzen 7、N100、M3',
       options: cpuOptions,
       def: { desktop: 'dcpu-main', laptop: 'lcpu-u', mini: 'lcpu-n', mobile: 'soc-mid' }
     },
     {
       id: 'gpu', name: '顯示卡', icon: 'bi-gpu-card', types: PC, kind: 'option', search: true,
       tip: '可以輸入型號搜尋，例如 4070、7800。',
+      ph: '搜尋型號，例如 4070、7800 XT、Arc',
       options: gpuOptions,
       def: { desktop: 'gpu-rtx-4060', laptop: 'igpu-intel', mini: 'igpu-intel' }
     },

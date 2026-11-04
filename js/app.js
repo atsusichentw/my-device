@@ -513,7 +513,8 @@
     $('#mHint').innerHTML = hintFor(slot, t);
     const search = $('#mSearch');
     search.value = '';
-    $('#mSearchWrap').hidden = !(slot.search && optionsFor(slot, t).length > 10);
+    $('#mSearchWrap').hidden = slot.kind === 'counter';
+    search.placeholder = slot.ph || '搜尋關鍵字';
     const customOn = !!(v && v.custom);
     $('#mCustom').hidden = slot.role === 'eff';
     $('#mCustomOn').checked = customOn;
@@ -563,13 +564,24 @@
       return;
     }
     const q = $('#mSearch').value.trim().toLowerCase().replace(/\s+/g, ' ');
-    const opts = optionsFor(slot, t).filter(function (o) {
+    const hit = function (o) {
       if (!q) return true;
       const hay = (o.name + ' ' + (o.desc || '') + ' ' + (o.key || '')).toLowerCase();
-      return q.split(' ').every(function (w) { return hay.indexOf(w) >= 0; });
-    });
+      const flat = hay.replace(/[\s\-／・、（）()]/g, '');
+      return q.split(' ').every(function (w) { return hay.indexOf(w) >= 0 || flat.indexOf(w.replace(/[\-／・、（）()]/g, '')) >= 0; });
+    };
+    const opts = optionsFor(slot, t).filter(hit);
     if (!opts.length) {
-      body.innerHTML = '<p class="opt-empty">找不到符合的項目，可以改用下方的「自訂瓦數」。</p>';
+      const others = [];
+      (slot.options || []).filter(hit).forEach(function (o) {
+        o.types.forEach(function (x) {
+          if (x !== t && slot.types.indexOf(x) >= 0 && others.indexOf(x) < 0) others.push(x);
+        });
+      });
+      const names = others.map(function (x) { return '「' + D.typeById[x].name + '」'; }).join('、');
+      body.innerHTML = '<p class="opt-empty">' + (others.length
+        ? '目前裝置類型是「' + esc(D.typeById[t].name) + '」，符合的項目在 ' + names + ' 裡，<br>切換裝置類型後就能選擇。'
+        : '找不到符合的項目，可以改用下方的「自訂瓦數」。') + '</p>';
       return;
     }
     const groups = [];
