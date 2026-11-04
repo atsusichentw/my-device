@@ -72,8 +72,11 @@ window.MD = (function () {
     o('lcpu-iu', 'Intel', 'Core U／Core Ultra U、V', 'i5-1235U、Ultra 5 125U、Ultra 7 258V', 1.5, 28, 3, LAP),
     o('lcpu-ih', 'Intel', 'Core H／Core Ultra H', 'i7-13700H、Ultra 7 155H、Ultra 9 285H', 3, 65, 4, LAP),
     o('lcpu-ihx', 'Intel', 'Core HX 電競款', 'i9-14900HX、Ultra 9 275HX', 5, 140, 5, LAP),
-    o('lcpu-au', 'AMD', 'Ryzen U 系列', '7530U、7640U、Ryzen AI 5 340', 1.5, 28, 3, LAP),
-    o('lcpu-ah', 'AMD', 'Ryzen HS／H 系列', '7840HS、8845HS、Ryzen AI 9 HX 370', 3, 65, 4, LAP),
+    o('lcpu-au', 'AMD', 'Ryzen U 系列', '5500U、7530U、7640U、8640U', 1.5, 28, 3, LAP),
+    o('lcpu-ah', 'AMD', 'Ryzen HS／H 系列', '6800H、7840HS、8845HS', 3, 65, 4, LAP),
+    o('lcpu-ai200', 'AMD', 'Ryzen AI 200 系列', 'Ryzen AI 5 230、AI 7 250、AI 7 260', 2.5, 54, 4, LAP),
+    o('lcpu-ai300', 'AMD', 'Ryzen AI 300 系列', 'Ryzen AI 5 340、AI 7 350、AI 9 365、AI 9 HX 370／375', 2, 54, 4, LAP),
+    o('lcpu-aimax', 'AMD', 'Ryzen AI Max 系列', 'Ryzen AI Max 385、AI Max 390、AI Max+ 395（含強力內建顯示）', 6, 120, 5, LAP),
     o('lcpu-ahx', 'AMD', 'Ryzen HX 電競款', '7945HX、9955HX', 5, 140, 5, LAP),
     o('lcpu-snap', 'Qualcomm', 'Snapdragon X', 'X Elite、X Plus（含內建顯示）', 1, 30, 4, LAP),
     o('apple-m', 'Apple', 'Apple M', 'M1、M2、M3、M4（含內建顯示）', 1.5, 25, 4, PC),
@@ -199,7 +202,7 @@ window.MD = (function () {
 
   const gpuOptions = [
     o('igpu-intel', '內建顯示', 'Intel 內建顯示', 'UHD、Iris Xe、Arc 內顯', 0.5, 8, 2, PC),
-    o('igpu-amd', '內建顯示', 'AMD 內建顯示', 'Radeon Graphics、680M、780M', 0.5, 10, 2, PC),
+    o('igpu-amd', '內建顯示', 'AMD 內建顯示', 'Radeon Graphics、680M、780M、880M、890M、8060S', 0.5, 10, 2, PC),
     o('igpu-apple', '內建顯示', 'Apple 晶片內建', '功耗已算在 Apple 晶片裡', 0, 0, 3, PC),
     o('igpu-soc', '內建顯示', 'Snapdragon 內建', '功耗已算在處理器裡', 0, 0, 2, PC),
     o('lgpu-low', '筆電獨立顯示', '入門款', 'RTX 2050、3050、4050、5050、GTX 1650', 3, 75, 3, LAP),
